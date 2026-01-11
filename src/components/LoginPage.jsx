@@ -50,7 +50,7 @@ const LoginPage = () => {
                 data
             );
             // Storing the token in localStorage
-            console.log(response.token);
+            // console.log(response.token);
             localStorage.setItem("JWT_TOKEN", JSON.stringify(response.token));
 
             // Store user info for profile display

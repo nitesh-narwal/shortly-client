@@ -70,7 +70,7 @@ const ShortenItem = ({ id, originalUrl, shortUrl, clickCount, createdDate, isOne
                       });
             setAnalyticsData(data);
             setSelectedUrl("");
-            console.log(data);
+            // console.log(data);
             
         } catch (error) {
             navigate("/error");
