@@ -1,27 +1,60 @@
 import dayjs from 'dayjs';
 import React, { useState, useEffect } from 'react';
 import CopyToClipboard from 'react-copy-to-clipboard';
-import { FaExternalLinkAlt, FaRegCalendarAlt, FaTrash, FaClock, FaFingerprint } from 'react-icons/fa';
+import { FaExternalLinkAlt, FaRegCalendarAlt, FaTrash, FaClock, FaFingerprint, FaLock, FaStar, FaRegStar, FaEdit, FaQrcode, FaTag } from 'react-icons/fa';
 import { MdAnalytics, MdOutlineAdsClick } from 'react-icons/md';
 import { LiaCheckSolid } from "react-icons/lia";
 import { IoCopy } from "react-icons/io5";
 import { useNavigate } from 'react-router-dom';
-import { useStoreContext } from '../../contextApi/ContextApi';
 import api from '../../api/api';
 import Graph from './Graph';
+import EditUrlModal from './EditUrlModal';
+import QrCodeModal from './QrCodeModal';
 import { Hourglass } from 'react-loader-spinner';
 import toast from 'react-hot-toast';
 
-const ShortenItem = ({ id, originalUrl, shortUrl, clickCount, createdDate, isOneTimeUrl, isUsed, expiresAt, isActive, onDelete }) => {
-    const{ token } = useStoreContext();
+const BreakdownBars = ({ title, data }) => {
+    const entries = Object.entries(data || {}).sort((a, b) => b[1] - a[1]);
+    const max = entries.length ? entries[0][1] : 0;
+    if (entries.length === 0) return null;
+    return (
+        <div>
+            <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">{title}</h4>
+            <div className="space-y-1.5">
+                {entries.slice(0, 5).map(([label, count]) => (
+                    <div key={label} className="flex items-center gap-2 text-xs">
+                        <span className="w-20 truncate text-slate-600" title={label}>{label}</span>
+                        <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
+                            <div
+                                className="bg-gradient-to-r from-blue-500 to-purple-500 h-2 rounded-full"
+                                style={{ width: `${max ? (count / max) * 100 : 0}%` }}
+                            />
+                        </div>
+                        <span className="w-6 text-right font-semibold text-slate-700">{count}</span>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+const ShortenItem = (props) => {
+    const { id, originalUrl, shortUrl, clickCount, createdDate, isOneTimeUrl, expiresAt, isActive, isFavorite, tags, passwordProtected, onDelete, onUpdate, selectable, selected, onToggleSelect } = props;
     const navigate = useNavigate();
     const [isCopied, setIsCopied] = useState(false);
     const [loader, setLoader] = useState(false);
     const [analyticToggle, setAnalyticToggle] = useState(false);
     const [selectedUrl, setSelectedUrl] = useState("");
     const [analyticsData, setAnalyticsData] = useState([]);
+    const [breakdown, setBreakdown] = useState(null);
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
+    const [showEditModal, setShowEditModal] = useState(false);
+    const [showQrModal, setShowQrModal] = useState(false);
+    const [favoriteBusy, setFavoriteBusy] = useState(false);
+    const [favorite, setFavorite] = useState(isFavorite);
+
+    useEffect(() => setFavorite(isFavorite), [isFavorite]);
 
     const subDomain = import.meta.env.VITE_REACT_FRONT_END_URL
         ? import.meta.env.VITE_REACT_FRONT_END_URL.replace(/^https?:\/\//, '')
@@ -30,6 +63,8 @@ const ShortenItem = ({ id, originalUrl, shortUrl, clickCount, createdDate, isOne
     const shortHref = `${import.meta.env.VITE_REACT_SUBDOMAIN}/${shortUrl}`;
     const shortDisplay = `${subDomain}/${shortUrl}`;
 
+    const refreshList = onUpdate || onDelete;
+
     const analyticsHandler = (shortUrl) => {
         if(!analyticToggle){
             setSelectedUrl(shortUrl);
@@ -37,22 +72,31 @@ const ShortenItem = ({ id, originalUrl, shortUrl, clickCount, createdDate, isOne
         setAnalyticToggle(!analyticToggle);
     };
 
+    const toggleFavorite = async () => {
+        setFavoriteBusy(true);
+        const next = !favorite;
+        try {
+            await api.patch(`/api/urls/${id}`, { isFavorite: next });
+            setFavorite(next);
+            if (refreshList) refreshList();
+        } catch (error) {
+            toast.error(error.friendlyMessage || 'Failed to update favorite');
+        } finally {
+            setFavoriteBusy(false);
+        }
+    };
+
     const handleDelete = async () => {
         setIsDeleting(true);
         try {
-            await api.delete(`/api/urls/${id}`, {
-                headers: {
-                    Authorization: "Bearer " + token,
-                },
-            });
+            await api.delete(`/api/urls/${id}`);
             toast.success("URL deleted successfully");
             setShowDeleteModal(false);
             if (onDelete) {
                 onDelete();
             }
         } catch (error) {
-            toast.error("Failed to delete URL");
-            console.error("Delete error:", error);
+            toast.error(error.friendlyMessage || "Failed to delete URL");
         } finally {
             setIsDeleting(false);
         }
@@ -61,20 +105,15 @@ const ShortenItem = ({ id, originalUrl, shortUrl, clickCount, createdDate, isOne
     const fetchMyShortUrl = async () => {
         setLoader(true);
         try {
-             const { data } = await api.get(`/api/urls/analytics/${selectedUrl}?startDate=2025-12-01T00:00:00&endDate=2027-12-31T23:59:59`, {
-                        headers: {
-                          "Content-Type": "application/json",
-                          Accept: "application/json",
-                          Authorization: "Bearer " + token,
-                        },
-                      });
+             const [{ data }, breakdownRes] = await Promise.all([
+                 api.get(`/api/urls/analytics/${selectedUrl}?startDate=2025-12-01T00:00:00&endDate=2027-12-31T23:59:59`),
+                 api.get(`/api/urls/analytics/${selectedUrl}/breakdown`).catch(() => ({ data: null })),
+             ]);
             setAnalyticsData(data);
+            setBreakdown(breakdownRes.data);
             setSelectedUrl("");
-            // console.log(data);
-            
-        } catch (error) {
+        } catch {
             navigate("/error");
-            console.log(error);
         } finally {
             setLoader(false);
         }
@@ -89,12 +128,30 @@ const ShortenItem = ({ id, originalUrl, shortUrl, clickCount, createdDate, isOne
 
     // Check if URL is expired
     const isExpired = expiresAt && new Date(expiresAt) < new Date();
+    const hasBreakdownData = breakdown && Object.values(breakdown).some((m) => m && Object.keys(m).length > 0);
 
     return (
         <div className={`bg-white shadow-lg border-l-4 ${isActive === false || isExpired ? 'border-l-red-500 bg-red-50/30' : 'border-l-blue-500'} px-6 sm:py-1 py-3 rounded-lg transition-all duration-200 hover:shadow-xl`}>
             <div className="flex sm:flex-row flex-col sm:justify-between w-full sm:gap-0 gap-5 py-5">
                 <div className="flex-1 sm:space-y-1 max-w-full overflow-x-auto overflow-y-hidden">
                     <div className="text-slate-900 pb-1 sm:pb-0 flex items-center gap-2 flex-wrap">
+                        {selectable && (
+                            <input
+                                type="checkbox"
+                                checked={!!selected}
+                                onChange={() => onToggleSelect && onToggleSelect(id)}
+                                className="w-4 h-4 rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer"
+                            />
+                        )}
+                        <button
+                            onClick={toggleFavorite}
+                            disabled={favoriteBusy}
+                            title={favorite ? 'Remove from favorites' : 'Add to favorites'}
+                            className="text-amber-400 hover:text-amber-500 disabled:opacity-50 transition-colors"
+                        >
+                            {favorite ? <FaStar /> : <FaRegStar />}
+                        </button>
+
                         <a
                             href={shortHref}
                             target="_blank"
@@ -106,6 +163,12 @@ const ShortenItem = ({ id, originalUrl, shortUrl, clickCount, createdDate, isOne
                         <FaExternalLinkAlt className={isActive === false || isExpired ? 'text-gray-400' : 'text-linkColor'} />
 
                         {/* Badges */}
+                        {passwordProtected && (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-rose-100 text-rose-700 rounded-full">
+                                <FaLock className="text-[10px]" />
+                                Protected
+                            </span>
+                        )}
                         {isOneTimeUrl && (
                             <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-purple-100 text-purple-700 rounded-full">
                                 <FaFingerprint className="text-[10px]" />
@@ -130,6 +193,17 @@ const ShortenItem = ({ id, originalUrl, shortUrl, clickCount, createdDate, isOne
                             {originalUrl}
                         </h3>
                     </div>
+
+                    {tags && tags.length > 0 && (
+                        <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                            {tags.map((tag) => (
+                                <span key={tag} className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium bg-teal-50 text-teal-700 border border-teal-200 rounded-full">
+                                    <FaTag className="text-[9px]" />
+                                    {tag}
+                                </span>
+                            ))}
+                        </div>
+                    )}
 
                     <div className="flex items-center gap-8 pt-6">
                         <div className="flex gap-1 items-center font-semibold text-green-800">
@@ -166,6 +240,20 @@ const ShortenItem = ({ id, originalUrl, shortUrl, clickCount, createdDate, isOne
                         )}
                         </div>
                     </CopyToClipboard>
+                    <button
+                        onClick={() => setShowQrModal(true)}
+                        title="QR Code"
+                        className="flex cursor-pointer items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-700 h-[44px] w-[44px] rounded-lg transition-all duration-200"
+                    >
+                        <FaQrcode className="text-lg" />
+                    </button>
+                    <button
+                        onClick={() => setShowEditModal(true)}
+                        title="Edit"
+                        className="flex cursor-pointer items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-700 h-[44px] w-[44px] rounded-lg transition-all duration-200"
+                    >
+                        <FaEdit className="text-lg" />
+                    </button>
                     <div
                         onClick={() => analyticsHandler(shortUrl)}
                         className="flex cursor-pointer gap-1.5 items-center bg-gradient-to-r from-purple-500 to-purple-600 py-2.5 font-semibold shadow-md hover:shadow-lg px-5 rounded-lg text-white transition-all duration-200 hover:from-purple-600 hover:to-purple-700"
@@ -185,9 +273,9 @@ const ShortenItem = ({ id, originalUrl, shortUrl, clickCount, createdDate, isOne
             <React.Fragment>
                 <div className={`${
                     analyticToggle ? "flex" : "hidden"
-                    }  max-h-96 sm:mt-0 mt-5 min-h-96 relative  border-t-2 w-[100%] overflow-hidden `}>
+                    } flex-col sm:mt-0 mt-5 min-h-96 relative border-t-2 w-[100%] pt-4`}>
                         {loader ? (
-                            <div className="mini-h-[calc(450vh-140px)] flex justify-center items-center w-full">
+                            <div className="min-h-[300px] flex justify-center items-center w-full">
                                 <div className=" Flex flex-col items-center gap-1">
                                     <Hourglass
                                         visible={true}
@@ -202,22 +290,44 @@ const ShortenItem = ({ id, originalUrl, shortUrl, clickCount, createdDate, isOne
                                 </div>
                             </div>
                             ) : (
-                            <>{analyticsData.length === 0 && (
-                             <div className="absolute flex flex-col  justify-center sm:items-center items-end  w-full left-0 top-0 bottom-0 right-0 m-auto">
-                                <h1 className=" text-slate-800 font-serif sm:text-2xl text-[15px] font-bold mb-1">
-                                    No Data For This Time Period
-                                </h1>
-                                <h3 className="sm:w-96 w-[90%] sm:ml-0 pl-6 text-center sm:text-lg text-[12px] text-slate-600 ">
-                                    Share your short link to view where your engagements are
-                                    coming from
-                                </h3>
+                            <div className="w-full">
+                                {analyticsData.length === 0 ? (
+                                 <div className="flex flex-col justify-center items-center py-10">
+                                    <h1 className=" text-slate-800 font-serif sm:text-2xl text-[15px] font-bold mb-1">
+                                        No Data For This Time Period
+                                    </h1>
+                                    <h3 className="sm:w-96 w-[90%] text-center sm:text-lg text-[12px] text-slate-600 ">
+                                        Share your short link to view where your engagements are
+                                        coming from
+                                    </h3>
+                                </div>
+                                ) : (
+                                    <div className="h-96">
+                                        <Graph graphData={analyticsData} />
+                                    </div>
+                                )}
+
+                                {hasBreakdownData && (
+                                    <div className="grid sm:grid-cols-2 gap-6 mt-6 pt-6 border-t border-slate-100">
+                                        <BreakdownBars title="Browser" data={breakdown.byBrowser} />
+                                        <BreakdownBars title="Operating System" data={breakdown.byOs} />
+                                        <BreakdownBars title="Device Type" data={breakdown.byDeviceType} />
+                                        <BreakdownBars title="Referrer" data={breakdown.byReferrer} />
+                                    </div>
+                                )}
                             </div>
-                            )}
-                            <Graph graphData={analyticsData} />
-                            </>
                         )}
                 </div>
             </React.Fragment>
+
+            <EditUrlModal
+                item={props}
+                open={showEditModal}
+                setOpen={setShowEditModal}
+                onSaved={refreshList}
+            />
+
+            <QrCodeModal shortUrl={shortUrl} open={showQrModal} setOpen={setShowQrModal} />
 
             {/* Delete Confirmation Modal */}
             {showDeleteModal && (
@@ -267,7 +377,3 @@ const ShortenItem = ({ id, originalUrl, shortUrl, clickCount, createdDate, isOne
 };
 
 export default ShortenItem;
-
-
-
-

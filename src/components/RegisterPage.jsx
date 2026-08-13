@@ -220,7 +220,7 @@ const RegisterPage = () => {
                                         {...register("email", {
                                             required: { value: true, message: "*Email is required" },
                                             pattern: {
-                                                value: /^[a-zA-Z0-9]+@(?:[a-zA-Z0-9]+\.)+com+$/,
+                                                value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
                                                 message: "Invalid email format"
                                             }
                                         })}
